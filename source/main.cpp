@@ -385,9 +385,11 @@ int main()
 	memBufObj ret;
 	ret = http_download("http://jimmytech.net/RSS2JSON/?url=http://feeds.feedburner.com/OffbeatOregonHistory");
 
-	if (ret.size == 0) printf("%d: Download size 0!\n", __LINE__);
-	else if (saveFile(ret, "downloadOut2.json") != 0) printf("%d: Failed to write file!\n", __LINE__);
-	else {
+	if (ret.size == 0) {
+		printf("%d: Download size 0!\n", __LINE__);
+	} else if (saveFile(ret, "downloadOut2.json") != 0) {
+		printf("%d: Failed to write file!\n", __LINE__);
+	} else {
 		printf("%d: Parsing Document!\n", __LINE__);
 		printf("%d: Document size: %" PRId32 "\n", __LINE__, ret.size);
 		Document document;
@@ -401,9 +403,9 @@ int main()
 			assert(document.HasMember("title"));
 			assert(document["title"].IsString());
 			printf("title = %s\n", document["title"].GetString());
-			assert(document.HasMember("title"));
-			assert(document["title"].IsString());
-			printf("title = %s\n", document["title"].GetString());
+			assert(document.HasMember("description"));
+			assert(document["description"].IsString());
+			printf("description = %s\n", document["description"].GetString());
 		}
 	}
 
