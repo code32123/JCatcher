@@ -1,119 +1,16 @@
 {
     "tasks": [
         {
-            
-            "label": "folder",
-            "type": "shell",
-            "command": "mkdir",
-            "args": [
-                        "-p",
-                        "${workspaceFolder}/build"
-            ],
-            "presentation": {
-                "panel": "shared"
-            }
-        },
-        {
-            "label": "build",
-            "dependsOn": ["folder"],
-            "type": "shell",
-            "command": "/opt/devkitpro/devkitARM/bin/arm-none-eabi-g++",
-            "args": [
-                        "-g",
-                        "-Wall",
-                        "-O2",
-                        "-mword-relocations",
-                        "-ffunction-sections",
-                        "-march=armv6k",
-                        "-mtune=mpcore",
-                        "-mfloat-abi=hard",
-                        "-mtp=soft",
-                        "-I${workspaceFolder}/include",
-                        "-I/opt/devkitpro/libctru/include",
-                        "-I/opt/devkitpro/devkitARM/include",
-                        "-I/opt/devkitpro/devkitARM/arm-none-eabi/include",
-                        "-fno-rtti",
-                        "-fno-exceptions",
-                        "-specs=3dsx.specs",
-                        "-L/opt/devkitpro/libctru/lib",
-                        "-lctru",
-                        "-lm",
-                        "-o",
-                        "${workspaceFolderBasename}.o",
-                        "-c",
-                        "${file}"
-            ],
-            "options": {
-                "cwd": "${workspaceFolder}/build"
-            },
-            "presentation": {
-                "panel": "shared"
-            }
-        },
-        {
-            "label": "link",
-            "dependsOn": ["folder", "build"],
-            "type": "shell",
-            "command": "/opt/devkitpro/devkitARM/bin/arm-none-eabi-g++",
-            "args": [
-                        "-specs=3dsx.specs",
-                        "-g",
-                        "-march=armv6k",
-                        "-mtune=mpcore",
-                        "-mfloat-abi=hard",
-                        "-mtp=soft",
-                        "-Wl,-Map,${workspaceFolderBasename}.map",
-                        "${workspaceFolder}/build/${workspaceFolderBasename}.o",
-                        "-L/opt/devkitpro/libctru/lib",
-                        "-lctru",
-                        "-lm",
-                        "-o",
-                        "${workspaceFolder}/build/${workspaceFolderBasename}.elf"
-            ],
-            "options": {
-                "cwd": "${workspaceFolder}/build"
-            },
-            "presentation": {
-                "panel": "shared"
-            }
-        },
-        {
-            "label": "smdhtool",
-            "dependsOn": ["folder", "build", "link"],
-            "type": "shell",
-            "command": "/opt/devkitpro/tools/bin/smdhtool",
-            "args": [
-                        "--create",
-                        "${workspaceFolderBasename}",
-                        "Built with devkitARM & libctru",
-                        "Unspecified Author",
-                        "/opt/devkitpro/libctru/default_icon.png",
-                        "${workspaceFolder}/build/${workspaceFolderBasename}.smdh"
-            ],
-            "options": {
-                "cwd": "${workspaceFolder}/build"
-            },
-            "presentation": {
-                "panel": "shared"
-            }
-        },
-        {
-            "label": "3dsxtool",
-            "dependsOn": ["folder", "build", "link", "smdhtool"],
-            "type": "shell",
-            "command": "/opt/devkitpro/tools/bin/3dsxtool",
-            "args": [
-                "${workspaceFolder}/build/${workspaceFolderBasename}.elf",
-                "${workspaceFolder}/${workspaceFolderBasename}.3dsx",
-                "--smdh=${workspaceFolder}/build/${workspaceFolderBasename}.smdh"
-            ],
-            "presentation": {
-                "panel": "shared"
-            }
-        },
-        {
-          "label": "Full",
-          "dependsOn": ["folder", "build", "link", "smdhtool", "3dsxtool"],
+          "label": "Build",
+          "type": "shell",
+          "command": "make",
+          "options": {
+              "cwd": "${workspaceFolder}",
+              "env": {
+                "DEVKITPRO": "/opt/devkitpro",
+                "DEVKITARM": "/opt/devkitpro/devkitARM"
+              }
+          },
           "group": {
               "kind": "build",
               "isDefault": true
@@ -125,12 +22,17 @@
         {
             "label": "clean",
             "type": "shell",
-            "command": "rm",
+            "command": "make",
             "args": [
-                "${workspaceFolderBasename}.3dsx",
-                "-r",
-                "${workspaceFolder}/build"
+                "clean"
             ],
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "env": {
+                  "DEVKITPRO": "/opt/devkitpro",
+                  "DEVKITARM": "/opt/devkitpro/devkitARM"
+                }
+            },
             "presentation": {
                 "panel": "shared"
             }
