@@ -1,4 +1,4 @@
-# http
+# JCatcher
 
-This is an example for using HTTPC. This downloads a raw image for displaying on the top-screen. The URL used here is a LAN-only one, hence this URL must be changed before building+running this example.
+This is a super simple program that is designed to download podcasts from a given rss feed so that they can be played in an mp3 player.
 
