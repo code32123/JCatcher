@@ -1,0 +1,48 @@
+{
+    "configurations": [
+        {
+            "name": "3DS",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/opt/devkitpro/libctru/include/**",
+                "/opt/devkitpro/devkitARM/include/**",
+                "/opt/devkitpro/devkitARM/arm-none-eabi/include/**"
+            ],
+            "defines": [
+                "ARM9",
+                "__3DS__"
+            ],
+            "compilerPath": "/opt/devkitpro/devkitARM/bin/arm-none-eabi-g++",
+            "compilerArgs": [
+                "-g",
+                "-Wall",
+                "-O2",
+                "-mword-relocations",
+                "-ffunction-sections",
+                "-march=armv6k",
+                "-mtune=mpcore",
+                "-mfloat-abi=hard",
+                "-mtp=soft",
+                "-I${workspaceFolder}/include",
+                "-I/opt/devkitpro/libctru/include",
+                "-I/opt/devkitpro/devkitARM/include",
+                "-I/opt/devkitpro/devkitARM/arm-none-eabi/include",
+                "-fno-rtti",
+                "-fno-exceptions",
+                "-specs=3dsx.specs",
+                "-L/opt/devkitpro/libctru/lib",
+                "-lctru",
+                "-lm"
+            ],
+            "cStandard": "gnu17",
+            "cppStandard": "gnu++11",
+            "intelliSenseMode": "gcc-x64",
+            "browse": {
+                "path": [
+                    "${workspaceFolder}/source"
+                ]
+            }
+        }
+    ],
+    "version": 4
+}
