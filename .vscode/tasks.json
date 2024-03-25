@@ -16,7 +16,8 @@
               "isDefault": true
           },
           "presentation": {
-              "panel": "shared"
+              "panel": "shared",
+              "clear": true
           }
         },
         {
@@ -34,7 +35,25 @@
                 }
             },
             "presentation": {
-                "panel": "shared"
+                "panel": "shared",
+                "clear": true
+            }
+        },
+        {
+            "label":"link",
+            "type":"shell",
+            "command": "/opt/devkitpro/tools/bin/3dslink",
+            "args": [
+                "-a",
+                "192.168.1.31",
+                "${workspaceFolderBasename}.3dsx"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "presentation": {
+                "panel": "shared",
+                "clear": true
             }
         }
     ],

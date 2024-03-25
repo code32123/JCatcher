@@ -23,8 +23,22 @@ struct fileBuf {
 	s32 error = 0;
 };
 
+struct episode {
+	char *url;
+	char *title;
+	tm release;
+};
+
+struct podcast {
+	char* title;
+	char* description;
+	SizeType episodesCount;
+	episode* episodes;
+};
+
 fileBuf http_download(const char *url)
 {
+	httpcInit(0); // Buffer size when POST/PUT.
 	fileBuf retBuf;
 	Result ret=0;
 	httpcContext context;
@@ -154,7 +168,7 @@ fileBuf http_download(const char *url)
 		retBuf.error = -1;
 		return retBuf;
 	}
-	memset(buf + size, 0, 1); // Pad with 0
+	// memset(buf + size, 0, 1); // Pad with 0
 
 	printf("%d: downloaded size: %" PRId32 "\n",__LINE__,size);
 
@@ -227,22 +241,22 @@ void printParseError(ParseErrorCode parseError) {
 }
 
 void showFileBuf(fileBuf fileBuf) {
-	u32 size = fileBuf.size;
-	if(size>(240*400*3*2))size = 240*400*3*2;
+// 	u32 size = fileBuf.size;
+// 	if(size>(240*400*3*2))size = 240*400*3*2;
 
-	u8* framebuf_bottom;
-	framebuf_bottom = gfxGetFramebuffer(GFX_BOTTOM, GFX_LEFT, NULL, NULL);
-	memcpy(framebuf_bottom, fileBuf.buf, size);
+// 	u8* framebuf;
+// 	framebuf = gfxGetFramebuffer(GFX_TOP, GFX_LEFT, NULL, NULL);
+// 	memcpy(framebuf, fileBuf.buf, size);
 
-	gfxFlushBuffers();
-	gfxSwapBuffers();
+// 	gfxFlushBuffers();
+// 	gfxSwapBuffers();
 
-	framebuf_bottom = gfxGetFramebuffer(GFX_BOTTOM, GFX_LEFT, NULL, NULL);
-	memcpy(framebuf_bottom, fileBuf.buf, size);
+// 	framebuf = gfxGetFramebuffer(GFX_TOP, GFX_LEFT, NULL, NULL);
+// 	memcpy(framebuf, fileBuf.buf, size);
 
-	gfxFlushBuffers();
-	gfxSwapBuffers();
-	gspWaitForVBlank();
+// 	gfxFlushBuffers();
+// 	gfxSwapBuffers();
+// 	gspWaitForVBlank();
 }
 
 void saveFileBuf(fileBuf fileBuf, const char* fileName) {
@@ -263,40 +277,130 @@ void saveFileBuf(fileBuf fileBuf, const char* fileName) {
 	fclose(file);
 }
 
-void parseFileBuf(fileBuf fileBuf) {
-	Document document;
+int parseFileBuf(fileBuf fileBuf, Document &document) {
 	document.ParseInsitu((char*)fileBuf.buf);
 	if (document.HasParseError()) {
 		printParseError(document.GetParseError());
-		return;
-		// return -2;
+		return -1;
+	}
+	return 0;
+}
+
+void holdForExit() {
+	printf("Press start to exit");
+	while (aptMainLoop()) {
+		gspWaitForVBlank();
+		hidScanInput();
+		u32 kDown = hidKeysDown();
+		if (kDown & KEY_START) break; // break in order to return to hbmenu
+	}
+	
+	httpcExit();
+	gfxExit();
+}
+
+tm parse8601(const char* dateTimeString) {
+	// https://stackoverflow.com/a/26896792
+	int year,month,day,hour,minute;
+	float second;
+	sscanf(dateTimeString, "%d-%d-%dT%d:%d:%fZ", &year, &month, &day, &hour, &minute, &second);
+	tm dateTime = { 0 };
+	dateTime.tm_year = year - 1900;
+	dateTime.tm_mon = month - 1;
+	dateTime.tm_mday = day;
+	dateTime.tm_hour = hour;
+	dateTime.tm_min = minute;
+	dateTime.tm_sec = (int)second;
+	return dateTime;
+}
+
+int parsePodcast(Document &document, podcast &newPodcast) {
+	if (!document.IsObject()) 									return -1;
+
+	if (!document.HasMember("title"))							return -2;
+	if (!document["title"].IsString())							return -3;
+	newPodcast.title = (char *)document["title"].GetString();
+
+	if (!document.HasMember("description"))						return -4;
+	if (!document["description"].IsString())					return -5;
+	newPodcast.description = (char *)document["description"].GetString();
+
+	if (!document.HasMember("items"))							return -6;
+	const Value& items = document["items"];
+
+	if (!items.IsArray())										return -7;
+	if (items.Empty())											return -8;
+	SizeType itemCount = items.Size();
+
+	newPodcast.episodesCount = itemCount;
+	newPodcast.episodes = (episode *)malloc(itemCount * sizeof(episode));
+
+	for (SizeType i = 0; i < itemCount; i++) {
+		const Value& curItem = items[i];
+		
+		if (!curItem.HasMember("title"))						return (-i*10)-1;
+		if (!curItem["title"].IsString())						return (-i*10)-2;
+		newPodcast.episodes[i].title = (char *)curItem["title"].GetString();
+
+		if (!curItem.HasMember("url"))							return (-i*10)-3;
+		if (!curItem["url"].IsString())							return (-i*10)-4;
+		newPodcast.episodes[i].url = (char *)curItem["url"].GetString();
+
+		if (!curItem.HasMember("date_published"))				return (-i*10)-5;
+		if (!curItem["date_published"].IsString())				return (-i*10)-6;
+		newPodcast.episodes[i].release = parse8601(curItem["date_published"].GetString());
 	}
 
-	printf("\nParsing to document succeeded.\n");
-	printf("\nAccess values in document:\n");
-	assert(document.IsObject());    // Document is a JSON value represents the root of DOM. Root can be either an object or array.
-	assert(document.HasMember("title"));
-	assert(document["title"].IsString());
-	printf("title = %s\n", document["title"].GetString());
-	assert(document.HasMember("description"));
-	assert(document["description"].IsString());
-	printf("description = %s\n", document["description"].GetString());
+	return 0;
 }
 
 int main()
 {
 	fileBuf downloadedFile;
 	gfxInitDefault();
-	httpcInit(0); // Buffer size when POST/PUT.
 
-	consoleInit(GFX_TOP,NULL);
+	consoleInit(GFX_BOTTOM,NULL);
 
 	//ret = http_download("https://www.toptal.com/developers/feed2json/convert?url=http://feeds.feedburner.com/OffbeatOregonHistory");
 	downloadedFile = http_download("http://jimmytech.net/RSS2JSON/?url=http://feeds.feedburner.com/OffbeatOregonHistory");
 	printf("%d: error from http_download: %" PRId32 "\n",__LINE__,downloadedFile.error);
+	if (downloadedFile.error != 0) {
+		holdForExit();
+		return 0;
+	}
 	showFileBuf(downloadedFile);
 	saveFileBuf(downloadedFile, "cast.json");
-	parseFileBuf(downloadedFile);
+	Document document;
+	int parserError = parseFileBuf(downloadedFile, document);
+
+	if (parserError != 0) {
+		printf("JSON Parser failed: %d", parserError);
+		holdForExit();
+		return 0;
+	}
+
+	podcast newPodcast;
+	parserError = parsePodcast(document, newPodcast); // Validates the json into a custom structure
+	if (parserError != 0) {
+		printf("Podcast Parser failed: %d", parserError);
+		holdForExit();
+		return 0;
+	}
+
+	printf("\nParsing to document succeeded.\n");
+	// printf("title = %s\n", newPodcast.title);
+	// printf("description = %s\n", newPodcast.description);
+	// printf("episodeNum = %d\n", newPodcast.episodesCount);
+	if (newPodcast.episodesCount > 0) {
+		// printf("title0 = %s\n", newPodcast.episodes[0].title);
+		// printf("url0 = %s\n", newPodcast.episodes[0].url);
+		// printf("time0 = %d\n", newPodcast.episodes[0].release);
+	}
+
+	free(newPodcast.episodes);
+	free(downloadedFile.buf);
+
+
 
 	// Main loop
 	while (aptMainLoop())
