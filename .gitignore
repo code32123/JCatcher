@@ -1,3 +1,4 @@
 build
 JCatcher.elf
 JCatcher.smdh
+*.lst
