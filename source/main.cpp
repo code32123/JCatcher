@@ -22,24 +22,6 @@
 
 using namespace rapidjson;
 
-struct fileBuf {
-	u8 *buf = 0;
-	u32 size = 0;
-};
-
-// struct episode {
-// 	char *url;
-// 	char *title;
-// 	tm release;
-// };
-
-// struct podcast {
-// 	char* title;
-// 	char* description;
-// 	SizeType episodesCount;
-// 	episode* episodes;
-// };
-
 #define SCREEN_WIDTH  400
 #define SCREEN_HEIGHT 240
 
@@ -57,15 +39,17 @@ C2D_TextBuf titleBuf  = C2D_TextBufNew(100);
 C2D_Text menu;
 C2D_TextBuf menuBuf = C2D_TextBufNew(4096);
 
+int retCode = 0;
 int cursor = 0;
-int menuLength = 2;
+int menuLength = 3;
 int selectedPodcast = 0;
 int selectedEpisode = 0;
 enum menuType {
 	InitialMenu,
 	ViewSavedPodcasts,
 	PodcastOptions,
-	ListEpisodes
+	ListEpisodes,
+	ViewCredits
 };
 
 menuType currentMenu = InitialMenu;
@@ -76,14 +60,19 @@ std::string titleText = "JCatcher";
 
 std::string initialMenuText = \
 		"Add new podcast URL\n"\
-		"View Saved Podcasts";
+		"View Saved Podcasts\n"\
+		"Credits";
 
 std::string podcastOptionsText = \
 		"Check Episodes\n"\
 		"Edit\n"\
 		"Remove";
 
-int retCode = 0;
+std::string creditsText = \
+		"Application: James Smythe\n"\
+		"RapidJSON: https://github.com/Tencent/rapidjson\n"\
+		"TinyXML-2: https://github.com/leethomason/tinyxml2";
+
 std::vector<std::string> Names;
 std::vector<std::string> URLs;
 std::vector<std::string> EpisodeNames;
@@ -275,43 +264,6 @@ void printParseError(ParseErrorCode parseError) {
 	}
 }
 
-void showFileBuf(fileBuf &fileBuf) {
-// 	u32 size = fileBuf.size;
-// 	if(size>(240*400*3*2))size = 240*400*3*2;
-
-// 	u8* framebuf;
-// 	framebuf = gfxGetFramebuffer(GFX_TOP, GFX_LEFT, NULL, NULL);
-// 	memcpy(framebuf, fileBuf.buf, size);
-
-// 	gfxFlushBuffers();
-// 	gfxSwapBuffers();
-
-// 	framebuf = gfxGetFramebuffer(GFX_TOP, GFX_LEFT, NULL, NULL);
-// 	memcpy(framebuf, fileBuf.buf, size);
-
-// 	gfxFlushBuffers();
-// 	gfxSwapBuffers();
-// 	gspWaitForVBlank();
-}
-
-int saveFileBuf(fileBuf &fileBuf, const char* fileName) {
-	struct stat st = {0};
-
-	if (stat("/3ds/JCatch/", &st) == -1) {
-		mkdir("/3ds/JCatch/", 0777);
-	}
-	std::string filePath = "/3ds/JCatch/";
-	filePath.append(fileName);
-	FILE* file = fopen(filePath.c_str(), "w");
-	if (file == NULL) {
-		return -1;
-	}
-	fseek(file, 0, SEEK_SET);
-	fwrite(fileBuf.buf, 1, fileBuf.size, file);
-	fclose(file);
-	return 0;
-}
-
 int saveFileBuf(std::string fileContents, const char* fileName) {
 	struct stat st = {0};
 	if (stat("/3ds/JCatch/", &st) == -1) {
@@ -469,7 +421,7 @@ void updateMenu() {
 	if (currentMenu == InitialMenu) {
 		free(menuString);
 		stringToBuffer(initialMenuText, menuString);
-		menuLength = 2;
+		menuLength = 3;
 		titleText = "JCatcher";
 	} else if (currentMenu == ViewSavedPodcasts) {
 		stringListToMenu(Names, 15);
@@ -566,9 +518,18 @@ void downloadEpisode()  {
 	free(downloadedFile);
 }
 
-int main() {
-	setupGraphics();
+Document settingsDoc;
+char* settingsBuf;
 
+void writeSettings() {
+	StringBuffer buffer;
+	Writer<StringBuffer> writer(buffer);
+	settingsDoc.Accept(writer);
+	const char* output = buffer.GetString();
+	saveFileBuf(output, "settings.json");
+}
+
+int readSettings() {
 	std::string settingsContents;
 	retCode = loadFileBuf(settingsContents, "settings.json");
 	if (retCode != 0) {
@@ -581,27 +542,33 @@ int main() {
 	} else {
 		std::cout << "Read settings" << std::endl;
 	}
-	Document settingsDoc;
-	char* settingsBuf;
 	stringToBuffer(settingsContents, settingsBuf);
 	retCode = parseFileBuf(settingsBuf, settingsDoc);
 	if (retCode != 0) {
 		std::cout << "Corrupted settings JSON: " << retCode << std::endl;
-		holdForExit();
-		return 0;
+		return -1;
 	}
 	if (!settingsDoc.HasMember("savedPodcasts")) {
 		std::cout << "Corrupted settings JSON: missing key \"savedPodcasts\"" << std::endl;
-		holdForExit();
-		return 0;
+		return -1;
 	}
 	for (SizeType i = 0; i < settingsDoc["savedPodcasts"].Size(); i++) {
 		URLs.push_back(settingsDoc["savedPodcasts"][i]["URL"].GetString());
 		Names.push_back(settingsDoc["savedPodcasts"][i]["Name"].GetString());
 	}
 	std::cout << "Loaded " << settingsDoc["savedPodcasts"].Size() << " saved podcast URLs" << std::endl;
-	free(settingsBuf);
+	return 0;
+}
 
+int main() {
+	setupGraphics();
+	retCode = readSettings();
+	if (retCode != 0) {
+		holdForExit();
+		return 0;
+	}
+
+	
 	// Main loop
 	while (aptMainLoop())
 	{
@@ -629,9 +596,24 @@ int main() {
 			// std::cout << "m:" << currentMenu << ",c:" << cursor << std::endl;
 			if (currentMenu == InitialMenu) {
 				if (cursor == 0) {
+					std::string newName = "Darknet Diaries";
+					std::string newURL = "https://feeds.megaphone.fm/darknetdiaries";
+
+					Document::AllocatorType& alloc = settingsDoc.GetAllocator();
+					Names.push_back(newName);
+					URLs.push_back(newURL);
+					settingsDoc["savedPodcasts"].PushBack(Value().SetObject()
+						.AddMember("Name", Value(newName.c_str(), alloc).Move(), alloc)
+						.AddMember("URL", Value(newURL.c_str(), alloc).Move(), alloc)
+					, alloc);
+					writeSettings();
+
 					std::cout << "Here's where I need to figure out the swkb lib lol." << std::endl;
 				} else if (cursor == 1) {
 					currentMenu = ViewSavedPodcasts;
+					updateMenu();
+				} else if (cursor == 2) {
+					currentMenu = ViewCredits;
 					updateMenu();
 				}
 			} else if (currentMenu == ViewSavedPodcasts) {
@@ -657,10 +639,8 @@ int main() {
 		drawUI();
 	}
 
-	// free(newPodcast.episodes);
-	// free(downloadedFile.buf);
-
 	// Exit services
+	free(settingsBuf);
 	cleanupGraphics();
 	httpcExit();
 	return 0;
