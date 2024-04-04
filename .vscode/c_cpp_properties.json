@@ -6,7 +6,8 @@
                 "${workspaceFolder}/**",
                 "/opt/devkitpro/libctru/include/**",
                 "/opt/devkitpro/devkitARM/include/**",
-                "/opt/devkitpro/devkitARM/arm-none-eabi/include/**"
+                "/opt/devkitpro/devkitARM/arm-none-eabi/include/**",
+                "/opt/devkitpro/portlibs/3ds/include/**"
             ],
             "defines": [
                 "ARM9",
@@ -27,6 +28,7 @@
                 "-I/opt/devkitpro/libctru/include",
                 "-I/opt/devkitpro/devkitARM/include",
                 "-I/opt/devkitpro/devkitARM/arm-none-eabi/include",
+                "-I/opt/devkitpro/portlibs/3ds/include",
                 "-fno-rtti",
                 "-fno-exceptions",
                 "-specs=3dsx.specs",

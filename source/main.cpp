@@ -1,9 +1,18 @@
+#include <vector>
+#include <fstream>
+#include <iostream>
+#include <list>
+
 #include <stdlib.h>
 #include <string.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <inttypes.h>
 #include <math.h>
-#include <list>
+#include <malloc.h>
+#include <cacert_pem.h>
+
+#include <sys/stat.h>
 
 #include <3ds.h>
 #include <citro2d.h>
@@ -14,23 +23,23 @@
 #include "rapidjson/writer.h"
 #pragma GCC diagnostic pop
 
+#include <tinyxml2.h>
 #include "rapidjson/stringbuffer.h"
-#include <iostream>
-#include <sys/stat.h>
-#include <vector>
-#include <fstream>
+#include <curl/curl.h>
+
 
 using namespace rapidjson;
 
 #define SCREEN_WIDTH  400
 #define SCREEN_HEIGHT 240
 
+
 C3D_RenderTarget* top;
 
 u32 clrWhite = C2D_Color32(0xFF, 0xFD, 0xD0, 0xFF);
-u32 clrGreen = C2D_Color32(0x00, 0xFF, 0x00, 0xFF);
+// u32 clrGreen = C2D_Color32(0x00, 0xFF, 0x00, 0xFF);
 u32 clrRed   = C2D_Color32(0xFF, 0x00, 0x00, 0xFF);
-u32 clrBlue  = C2D_Color32(0x00, 0x00, 0xFF, 0xFF);
+// u32 clrBlue  = C2D_Color32(0x00, 0x00, 0xFF, 0xFF);
 
 std::string defaultJSON = "{\"savedPodcasts\":[{\"Name\":\"Offbeat Oregon\",\"URL\":\"http://feeds.feedburner.com/OffbeatOregonHistory\"}]}";
 
@@ -70,139 +79,70 @@ std::string podcastOptionsText = \
 
 std::string creditsText = \
 		"Application: James Smythe\n"\
-		"RapidJSON: https://github.com/Tencent/rapidjson\n"\
-		"TinyXML-2: https://github.com/leethomason/tinyxml2";
+		"Thanks to: TinyXML2, RapidJSON";
 
 std::vector<std::string> Names;
 std::vector<std::string> URLs;
 std::vector<std::string> EpisodeNames;
 std::vector<std::string> EpisodeURLs;
 
-int http_download(std::string url, char* &fileBuf, int &finalSize) {
-	Result ret=0;
-	httpcContext context;
-	char *newurl=NULL;
-	u32 statuscode=0;
-	u32 contentsize=0, readsize=0, size=0;
-	u8 *buf, *lastbuf;
+#define SOC_ALIGN       0x1000
+#define SOC_BUFFERSIZE  0x100000
+static u32 *SOC_buffer = NULL;
+static const char *pCACertFilePath = "/3ds/JCatch/cacert.pem";
 
-	// std::cout << __LINE__ << ": Downloading " << url << std::endl;
+static size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, void *userp) {
+	size_t realsize = size * nmemb;
+	((std::string *)userp)->append((char*)contents, realsize);
+	std::cout << "#";
+	return realsize;
+}
 
-	do {
-		ret = httpcOpenContext(&context, HTTPC_METHOD_GET, url.c_str(), 1);
-		if (ret != 0) std::cout << __LINE__ << ": return from httpcOpenContext: " << ret << std::endl;
-
-		// This disables SSL cert verification, so https:// will be usable
-		ret = httpcSetSSLOpt(&context, SSLCOPT_DisableVerify);
-		if (ret != 0) std::cout << __LINE__ << ": return from httpcSetSSLOpt: " << ret << std::endl;
-
-		// Enable Keep-Alive connections
-		ret = httpcSetKeepAlive(&context, HTTPC_KEEPALIVE_ENABLED);
-		if (ret != 0) std::cout << __LINE__ << ": return from httpcSetKeepAlive: " << ret << std::endl;
-
-		// Set a User-Agent header so websites can identify your application
-		ret = httpcAddRequestHeaderField(&context, "User-Agent", "httpc-example/1.0.0");
-		if (ret != 0) std::cout << __LINE__ << ": return from httpcAddRequestHeaderField: " << ret << std::endl;
-
-		// Tell the server we can support Keep-Alive connections.
-		// This will delay connection teardown momentarily (typically 5s)
-		// in case there is another request made to the same server.
-		ret = httpcAddRequestHeaderField(&context, "Connection", "Keep-Alive");
-		if (ret != 0) std::cout << __LINE__ << ": return from httpcAddRequestHeaderField: " << ret << std::endl;
-
-		ret = httpcBeginRequest(&context);
-		if(ret!=0){
-			httpcCloseContext(&context);
-			if(newurl!=NULL) free(newurl);
-			std::cout << __LINE__ << ": return from httpcBeginRequest: " << ret << std::endl;
-			return ret;
+int setupCACERT() {
+	std::cout << "Checking for cacert.pem" << std::endl;
+	struct stat st = {0};
+	if (stat(pCACertFilePath, &st) == -1) {
+		std::cout << "Creating cacert.pem" << std::endl;
+		FILE* file = fopen(pCACertFilePath, "w");
+		if (file == NULL) {
+			return -1;
 		}
-
-		ret = httpcGetResponseStatusCode(&context, &statuscode);
-		if(ret!=0){
-			httpcCloseContext(&context);
-			if(newurl!=NULL) free(newurl);
-			std::cout << __LINE__ << ": return from httpcGetResponseStatusCode: " << ret << std::endl;
-			return ret;
-		}
-
-		if ((statuscode >= 301 && statuscode <= 303) || (statuscode >= 307 && statuscode <= 308)) {
-			if(newurl==NULL) newurl = (char*)malloc(0x1000); // One 4K page for new URL
-			if (newurl==NULL){
-				httpcCloseContext(&context);
-				return -1;
-			}
-			ret = httpcGetResponseHeader(&context, "Location", newurl, 0x1000);
-			url = newurl; // Change pointer to the url that we just learned
-			std::cout << __LINE__ << ": redirecting to url: " << url << std::endl;
-			httpcCloseContext(&context); // Close this context before we try the next
-		}
-	} while ((statuscode >= 301 && statuscode <= 303) || (statuscode >= 307 && statuscode <= 308));
-
-	if(statuscode!=200){
-		std::cout << __LINE__ << ": URL returned status: " << statuscode << std::endl;
-		httpcCloseContext(&context);
-		if(newurl!=NULL) free(newurl);
-		return -2;
+		fseek(file, 0, SEEK_SET);
+		fwrite(cacert_pem, 1, cacert_pem_size, file);
+		fclose(file);
 	}
+	return 0;
+}
 
-	// This relies on an optional Content-Length header and may be 0
-	ret=httpcGetDownloadSizeState(&context, NULL, &contentsize);
-	if(ret!=0){
-		httpcCloseContext(&context);
-		if(newurl!=NULL) free(newurl);
-		std::cout << __LINE__ << ": return from httpcGetDownloadSizeState: " << ret << std::endl;
-		return ret;
+int download(std::string url, std::string &fileContents) {
+	CURL *curl;
+	CURLcode res;
+	const char* urlc = url.c_str();
+
+
+	curl_global_init(CURL_GLOBAL_DEFAULT);
+
+	curl = curl_easy_init();
+	if(curl) {
+		curl_easy_setopt(curl, CURLOPT_URL, urlc);
+		curl_easy_setopt(curl, CURLOPT_SSLCERTTYPE, "PEM");
+		curl_easy_setopt(curl, CURLOPT_CAINFO, pCACertFilePath);
+		curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, true);
+		curl_easy_setopt(curl, CURLOPT_CA_CACHE_TIMEOUT, 604800L); // cache the CA cert bundle in memory for a week
+	    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+ 	    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&fileContents);
+
+		/* Perform the request, res gets the return code */
+		res = curl_easy_perform(curl);
+
+		/* Check for errors */
+		if(res != CURLE_OK)
+			fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+
+		/* always cleanup */
+		curl_easy_cleanup(curl);
 	}
-
-	// Start with a single page buffer
-	buf = (u8*)malloc(0x1000);
-	if(buf==NULL){
-		httpcCloseContext(&context);
-		if(newurl!=NULL) free(newurl);
-		return -1;
-	}
-
-	do {
-		// This download loop resizes the buffer as data is read.
-		ret = httpcDownloadData(&context, buf+size, 0x1000, &readsize);
-		size += readsize; 
-		if (ret == (s32)HTTPC_RESULTCODE_DOWNLOADPENDING){
-				lastbuf = buf; // Save the old pointer, in case realloc() fails.
-				buf = (u8*)realloc(buf, size + 0x1000);
-				if(buf==NULL){ 
-					httpcCloseContext(&context);
-					free(lastbuf);
-					if(newurl!=NULL) free(newurl);
-					return -1;
-				}
-			}
-			std::cout << "#";
-	} while (ret == (s32)HTTPC_RESULTCODE_DOWNLOADPENDING);	
-
-	if(ret!=0){
-		httpcCloseContext(&context);
-		if(newurl!=NULL) free(newurl);
-		free(buf);
-		return -1;
-	}
-
-	// Resize the buffer back down to our actual final size
-	size++;
-	lastbuf = buf;
-	buf = (u8*)realloc(buf, size);
-	if (buf == NULL) { // realloc() failed.
-		httpcCloseContext(&context);
-		free(lastbuf);
-		if (newurl != NULL) free(newurl);
-		return -1;
-	}
-
-	fileBuf = (char*) buf;
-	finalSize = size;
-
-	httpcCloseContext(&context);
-	if (newurl!=NULL) free(newurl);
+ 
 	return 0;
 }
 
@@ -264,7 +204,7 @@ void printParseError(ParseErrorCode parseError) {
 	}
 }
 
-int saveFileBuf(std::string fileContents, const char* fileName) {
+int saveFile(std::string fileContents, std::string fileName) {
 	struct stat st = {0};
 	if (stat("/3ds/JCatch/", &st) == -1) {
 		mkdir("/3ds/JCatch/", 0777);
@@ -282,7 +222,7 @@ int saveFileBuf(std::string fileContents, const char* fileName) {
 	return 0;
 }
 
-int loadFileBuf(std::string &fileContents, const char* fileName) {
+int loadFile(std::string &fileContents, std::string fileName) {
 	struct stat st = {0};
 
 	if (stat("/3ds/JCatch/", &st) == -1) {
@@ -304,7 +244,7 @@ int loadFileBuf(std::string &fileContents, const char* fileName) {
 	return 0;
 }
 
-int parseFileBuf(char* fileBuf, Document &document) {
+int jsonParse(char* fileBuf, Document &document) {
 	document.ParseInsitu(fileBuf);
 	if (document.HasParseError()) {
 		printParseError(document.GetParseError());
@@ -325,57 +265,62 @@ void holdForExit() {
 	gfxExit();
 }
 
-tm parse8601(const char* dateTimeString) {
-	// https://stackoverflow.com/a/26896792
-	int year,month,day,hour,minute;
-	float second;
-	sscanf(dateTimeString, "%d-%d-%dT%d:%d:%fZ", &year, &month, &day, &hour, &minute, &second);
-	tm dateTime = { 0 };
-	dateTime.tm_year = year - 1900;
-	dateTime.tm_mon = month - 1;
-	dateTime.tm_mday = day;
-	dateTime.tm_hour = hour;
-	dateTime.tm_min = minute;
-	dateTime.tm_sec = (int)second;
-	return dateTime;
-}
+// tm parse8601(const char* dateTimeString) {
+// 	// https://stackoverflow.com/a/26896792
+// 	int year,month,day,hour,minute;
+// 	float second;
+// 	sscanf(dateTimeString, "%d-%d-%dT%d:%d:%fZ", &year, &month, &day, &hour, &minute, &second);
+// 	tm dateTime = { 0 };
+// 	dateTime.tm_year = year - 1900;
+// 	dateTime.tm_mon = month - 1;
+// 	dateTime.tm_mday = day;
+// 	dateTime.tm_hour = hour;
+// 	dateTime.tm_min = minute;
+// 	dateTime.tm_sec = (int)second;
+// 	return dateTime;
+// }
 
-int parsePodcast(Document &document) {
-	if (!document.IsObject()) 									return -1;
-	if (!document.HasMember("title"))							return -2;
-	if (!document["title"].IsString())							return -3;
-	if (!document.HasMember("description"))						return -4;
-	if (!document["description"].IsString())					return -5;
-	if (!document.HasMember("items"))							return -6;
-	const Value& items = document["items"];
-	if (!items.IsArray())										return -7;
-	if (items.Empty())											return -8;
-	SizeType itemCount = items.Size();
+// int parsePodcast(Document &document) {
+// 	if (!document.IsObject()) 									return -1;
+// 	if (!document.HasMember("title"))							return -2;
+// 	if (!document["title"].IsString())							return -3;
+// 	if (!document.HasMember("description"))						return -4;
+// 	if (!document["description"].IsString())					return -5;
+// 	if (!document.HasMember("items"))							return -6;
+// 	const Value& items = document["items"];
+// 	if (!items.IsArray())										return -7;
+// 	if (items.Empty())											return -8;
+// 	SizeType itemCount = items.Size();
+//
+// 	for (SizeType i = 0; i < itemCount; i++) {
+// 		const Value& curItem = items[i];
+//		
+// 		if (!curItem.HasMember("title"))						return (-i*10)-1;
+// 		if (!curItem["title"].IsString())						return (-i*10)-2;
+// 		EpisodeNames.push_back(curItem["title"].GetString());
+//
+// 		if (!curItem.HasMember("url"))							return (-i*10)-3;
+// 		if (!curItem["url"].IsString())							return (-i*10)-4;
+// 		EpisodeURLs.push_back(curItem["url"].GetString());
+// 	}
+//
+// 	return 0;
+// }
 
-	for (SizeType i = 0; i < itemCount; i++) {
-		const Value& curItem = items[i];
-		
-		if (!curItem.HasMember("title"))						return (-i*10)-1;
-		if (!curItem["title"].IsString())						return (-i*10)-2;
-		EpisodeNames.push_back(curItem["title"].GetString());
-
-		if (!curItem.HasMember("url"))							return (-i*10)-3;
-		if (!curItem["url"].IsString())							return (-i*10)-4;
-		EpisodeURLs.push_back(curItem["url"].GetString());
-	}
-
-	return 0;
-}
-
-void stringToBuffer(std::string string, char* &buffer) {
+int stringToBuffer(std::string string, char* &buffer) {
 	const char* cstr = string.c_str();
 	int contentSize = strlen(cstr);
 	buffer = (char*)malloc(contentSize+1);
+	if (buffer == NULL) {
+		return -1;
+	}
 	memcpy(buffer, cstr, contentSize);
 	memset(buffer+contentSize, 0, 1);
+	return 0;
 }
 
 void stringListToMenu(std::vector<std::string> stringList, int amount) {
+	std::cout << stringList.size() << " items in sl" << std::endl;
 	std::string output = "";
 	menuLength = std::fmin(stringList.size(), amount);
 	for (int i = 0; i < menuLength; i++) {
@@ -391,28 +336,38 @@ int fetchPodcasts() {
 	EpisodeNames = {};
 	EpisodeURLs = {};
 	std::cout << "Fetching episodes for " << Names[selectedPodcast] << std::endl;
-	char* downloadedFile;
-	std::string targetURL = "http://jimmytech.net/RSS2JSON/?url=";
-	targetURL.append(URLs[selectedPodcast]);
-	int size;
-	retCode = http_download(targetURL, downloadedFile, size);
+	std::string downloadedFile;
+	std::string targetURL = URLs[selectedPodcast];
+	retCode = download(targetURL, downloadedFile);
 	if (retCode != 0) {
 		std::cout << "HTTP download failed: " << retCode << std::endl;
 		return -1;
 	}
-	Document RSSFeed;
-	retCode = parseFileBuf(downloadedFile, RSSFeed);
-	if (retCode != 0) {
-		std::cout << "JSON Parser failed: " << retCode << std::endl;
-		return -2;
+
+	std::string fileDownload = "";
+
+	char* DocBuffer;
+	stringToBuffer(downloadedFile, DocBuffer);
+
+	tinyxml2::XMLDocument RSSFeed;
+	tinyxml2::XMLError xmlRetCode = RSSFeed.Parse(DocBuffer);
+	if (xmlRetCode != tinyxml2::XML_SUCCESS) {
+		std::cout << "Err, xml: " << RSSFeed.ErrorIDToName(xmlRetCode) << std::endl;
+		std::cout << "Line: " << RSSFeed.ErrorLineNum() << std::endl;
+		// holdForExit();
+		return 0;
 	}
 
-	retCode = parsePodcast(RSSFeed);
-	if (retCode != 0) {
-		std::cout << "Podcast Parser failed: " << retCode << std::endl;
-		return -3;
+	tinyxml2::XMLElement* Feed = RSSFeed.FirstChildElement("rss");
+	tinyxml2::XMLElement* Chan = Feed->FirstChildElement("channel");
+	// tinyxml2::XMLElement* Name = Chan->FirstChildElement("title");
+	int i = 0;
+	for (tinyxml2::XMLElement* node = Chan->FirstChildElement("item"); node != NULL; node = node->NextSiblingElement("item")) {
+		EpisodeNames.push_back(node->FirstChildElement("title")->GetText());
+		EpisodeURLs.push_back(node->FirstChildElement("enclosure")->Attribute("url"));
+		i++;
 	}
-	free(downloadedFile);
+	std::cout << "Loaded " << i << " episodes" << std::endl;
 	return 0;
 }
 
@@ -440,7 +395,6 @@ void updateMenu() {
 
 void setupGraphics() {
 	gfxInitDefault();
-	httpcInit(0); // Buffer size when POST/PUT.
 
 	C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
 	C2D_Init(C2D_DEFAULT_MAX_OBJECTS);
@@ -467,55 +421,74 @@ void drawUI() {
 	C2D_SceneBegin(top);
 	C2D_TextBufClear(titleBuf);
 	C2D_TextBufClear(menuBuf);
-
 	// Draw the title
 	C2D_TextParse(&title, titleBuf, titleText.c_str());
 	C2D_TextOptimize(&title);
 	C2D_DrawText(&title, 0, 10, 10, 0, 0.7, 0.7);
-
 	// Draw the menu
 	C2D_TextParse(&menu, menuBuf, menuString);
 	C2D_TextOptimize(&menu);
 	C2D_DrawText(&menu, 0, 30, 40, 0, 0.4, 0.4);
-
 	// Draw the cursor
 	C2D_DrawTriangle(10, cursor*12+41, clrRed, 20, cursor*12+46, clrRed, 10, cursor*12+51, clrRed, 0);
-
 	C3D_FrameEnd(0);
 }
 
-int saveMP3(const char* fileContents, int fileSize, std::string fileName) {
-	fileName.append(".mp3");
+static size_t WriteMP3Callback(void *contents, size_t size, size_t nmemb, void *userp) {
+	size_t realsize = size * nmemb;
+	std::ofstream* myfile = (std::ofstream*)userp;
+	
 
-	struct stat st = {0};
-	if (stat("/3ds/JCatch/", &st) == -1) {
-		mkdir("/3ds/JCatch/", 0777);
-	}
-	std::string filePath = "/3ds/JCatch/";
-	filePath.append(fileName);
-	FILE* file = fopen(filePath.c_str(), "w");
-	if (file == NULL) {
-		return -1;
-	}
-	fseek(file, 0, SEEK_SET);
-	fwrite(fileContents, 1, fileSize, file);
-	fclose(file);
-	return 0;
+	myfile->write((const char *)contents, realsize);
+	std::cout << "3";
+
+	return realsize;
 }
 
 void downloadEpisode()  {
 	std::cout << "Downloading: " << EpisodeURLs[selectedEpisode] << std::endl;
+	std::string targetURL = EpisodeURLs[selectedEpisode];
+	std::string filePath = "/3ds/JCatch/";
+	filePath.append(EpisodeNames[selectedEpisode]);
+	filePath.append(".mp3");
 
-	std::string targetURL = "http://jimmytech.net/HTTPRSS/?url=";
-	targetURL.append(EpisodeURLs[selectedEpisode]);
+	std::ofstream myfile;
+	myfile.open(filePath.c_str(), std::fstream::out | std::fstream::binary);
+	if (!myfile.is_open()) {
+		std::cout << "Failed to open " << filePath << " to download" << std::endl;
+		return;
+	}
 
-	char* downloadedFile;
-	int fileSize;
-	retCode = http_download(targetURL, downloadedFile, fileSize);
+	// std::string downloadedFile;
+	
+	CURL *curl;
+	CURLcode res;
+	const char* urlc = targetURL.c_str();
 
-	saveMP3(downloadedFile, fileSize, EpisodeNames[selectedEpisode]);
 
-	free(downloadedFile);
+	curl_global_init(CURL_GLOBAL_DEFAULT);
+
+	curl = curl_easy_init();
+	if(curl) {
+		curl_easy_setopt(curl, CURLOPT_URL, urlc);
+		curl_easy_setopt(curl, CURLOPT_SSLCERTTYPE, "PEM");
+		curl_easy_setopt(curl, CURLOPT_CAINFO, pCACertFilePath);
+		curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, true);
+		curl_easy_setopt(curl, CURLOPT_CA_CACHE_TIMEOUT, 604800L); // cache the CA cert bundle in memory for a week
+	    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMP3Callback);
+ 	    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&myfile);
+
+		/* Perform the request, res gets the return code */
+		res = curl_easy_perform(curl);
+
+		/* Check for errors */
+		if(res != CURLE_OK)
+			fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+
+		/* always cleanup */
+		curl_easy_cleanup(curl);
+	}
+	myfile.close();
 }
 
 Document settingsDoc;
@@ -526,16 +499,17 @@ void writeSettings() {
 	Writer<StringBuffer> writer(buffer);
 	settingsDoc.Accept(writer);
 	const char* output = buffer.GetString();
-	saveFileBuf(output, "settings.json");
+	saveFile(output, "settings.json");
 }
 
-int readSettings() {
+int setupSettings() {
 	std::string settingsContents;
-	retCode = loadFileBuf(settingsContents, "settings.json");
+	retCode = loadFile(settingsContents, "settings.json");
 	if (retCode != 0) {
-		std::cout << "Failed to read file, setting & saving defaults. Enjoy!" << std::endl;
-		std::cout << defaultJSON << std::endl;
-		retCode = saveFileBuf(defaultJSON, "settings.json");
+		std::cout << "settings.json not found, creating" << std::endl;
+		// std::cout << defaultJSON << std::endl;
+		settingsContents = defaultJSON;
+		retCode = saveFile(defaultJSON, "settings.json");
 		if (retCode != 0) {
 			std::cout << "Failed to write file." << std::endl;
 		}
@@ -543,7 +517,7 @@ int readSettings() {
 		std::cout << "Read settings" << std::endl;
 	}
 	stringToBuffer(settingsContents, settingsBuf);
-	retCode = parseFileBuf(settingsBuf, settingsDoc);
+	retCode = jsonParse(settingsBuf, settingsDoc);
 	if (retCode != 0) {
 		std::cout << "Corrupted settings JSON: " << retCode << std::endl;
 		return -1;
@@ -560,14 +534,52 @@ int readSettings() {
 	return 0;
 }
 
-int main() {
-	setupGraphics();
-	retCode = readSettings();
-	if (retCode != 0) {
-		holdForExit();
-		return 0;
+void setupDirectory() {
+	struct stat st = {0};
+	if (stat("/3ds/JCatch/", &st) == -1) {
+		mkdir("/3ds/JCatch/", 0777);
+	}
+}
+
+int setupSoc() {
+	std::cout << "Socket Setup" << std::endl;
+	int ret;
+	SOC_buffer = (u32*)memalign(SOC_ALIGN, SOC_BUFFERSIZE);
+
+	if(SOC_buffer == NULL) {
+		std::cout << "memalign: failed to allocate" << std::endl;
+		return -1;
 	}
 
+	// Now intialise soc:u service
+	if ((ret = socInit(SOC_buffer, SOC_BUFFERSIZE)) != 0) {
+    	printf("socInit: 0x%08X\n", (unsigned int)ret);
+		return -1;
+	}
+	return 0;
+}
+
+int setupCurl() {
+	std::cout << "Curl Setup" << std::endl;
+	setupCACERT();
+	setupSoc();
+	return 0;
+}
+
+void cleanupCurl() {
+	curl_global_cleanup();
+	socExit();
+}
+
+int main() {
+	setupGraphics();
+	setupDirectory();
+	setupCurl();
+	setupSettings();
+
+	// std::string testURL = "http://feeds.feedburner.com/OffbeatOregonHistory";
+	// std::string testURL = "https://feeds.megaphone.fm/LMG3928170156";
+	// std::string testURL = "https://omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/A91018A4-EA4F-4130-BF55-AE270180C327/44710ECC-10BB-48D1-93C7-AE270180C33E/podcast.rss";
 	
 	// Main loop
 	while (aptMainLoop())
@@ -592,6 +604,23 @@ int main() {
 				updateMenu();
 			}
 		}
+		// if (kDown & KEY_L) {
+		// 	std::cout << "Removing settings.json...";
+		// 	const char* filePath = "/3ds/JCatch/settings.json";
+		// 	retCode = std::remove(filePath);
+		// 	if (retCode != 0) {
+		// 		std::cout << "Err" << retCode << std::endl;
+		// 		std::perror("Error deleting");
+		// 		if (!std::ifstream{filePath}) {
+		// 			std::cout << "And I can't read it either" << std::endl;
+		// 		} else {
+		// 			std::cout << "But I can read it just fine lol" << std::endl;
+		// 		}
+		// 	} else {
+		// 		std::cout << "Done!" << std::endl;
+		// 		break;
+		// 	}
+		// }
 		if (kDown & KEY_A) {
 			// std::cout << "m:" << currentMenu << ",c:" << cursor << std::endl;
 			if (currentMenu == InitialMenu) {
@@ -641,8 +670,8 @@ int main() {
 
 	// Exit services
 	free(settingsBuf);
+	cleanupCurl();
 	cleanupGraphics();
-	httpcExit();
 	return 0;
 }
 
