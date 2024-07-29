@@ -179,8 +179,22 @@ endif
 
 #---------------------------------------------------------------------------------
 clean:
-	@echo clean ...
-	@rm -fr $(BUILD) $(TARGET).3dsx $(OUTPUT).smdh $(TARGET).elf $(GFXBUILD)
+	@echo Removing...
+	@echo $(BUILD)
+	@rm -rf $(BUILD)
+	@echo $(TARGET).3dsx
+	@rm -f $(TARGET).3dsx
+	@echo $(TARGET).smdh
+	@rm -f $(TARGET).smdh
+	@echo $(TARGET).elf
+	@rm -f $(TARGET).elf
+	@echo $(TARGET).lst
+	@rm -f $(TARGET).lst
+
+	@if [ $(BUILD) != $(GFXBUILD) ]; then\
+        echo $(GFXBUILD);\
+		rm -f $(GFXBUILD);\
+    fi
 
 #---------------------------------------------------------------------------------
 $(GFXBUILD)/%.t3x	$(BUILD)/%.h	:	%.t3s
